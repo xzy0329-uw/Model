@@ -51,6 +51,8 @@ DYNAMIC_FIELDS = (
     'temp_celsius', 'solver_tol',
     # Tiered architecture: drivers stored as constants when not time-varying
     'pCa', 'z_line', 'lattice_spacing',
+    # LDA parameter
+    'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold',
 )
 
 
@@ -157,6 +159,8 @@ class DynamicParams:
         'temp_celsius', 'solver_tol',
         # Tiered architecture: drivers stored as constants when not time-varying
         'pCa', 'z_line', 'lattice_spacing',
+        # Newly Added for Length Dependence Activation(LDA)
+        'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold'
     )
 
     def __init__(self, **kwargs):
@@ -171,6 +175,11 @@ class DynamicParams:
         # MECHANICAL PARAMETERS (all as JAX arrays)
         # ==========================================================================
 
+        # LDA parameter (Newly Added)
+        self.xb_lda_enabled = jnp.asarray(kwargs.get('xb_lda_enabled', 0.0))           # LDA control switch  
+        self.xb_lda_gain = jnp.asarray(kwargs.get('xb_lda_gain', 5.0))               # basic LDA rate
+        self.xb_lda_strain_threshold = jnp.asarray(kwargs.get('xb_lda_strain_threshold', 1.0))     # Over 1um will be considered as strain
+                
         # Thick filament
         self.thick_k = jnp.asarray(kwargs.get('thick_k', 2020.0))  # pN/nm
 

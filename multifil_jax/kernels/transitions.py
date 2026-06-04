@@ -45,6 +45,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from typing import Tuple, Dict, Optional, Union, TYPE_CHECKING
+from multifil_jax.core.sarc_geometry import SarcTopology
 
 if TYPE_CHECKING:
     from multifil_jax.core.sarc_geometry import SarcTopology
@@ -412,6 +413,58 @@ def thin_transitions(state: 'State',
 
 
 # ============================================================================
+# Length Dependence Activation
+# ============================================================================
+
+def compute_xb_strain_siganl(
+        xb_distances_flat, 
+        xb_states_flat, 
+        params,
+    ) -> jnp.ndarray:
+    
+    x = xb_distances_flat[:, 0]
+    y = xb_distances_flat[:, 1]
+    r = jnp.sqrt(x ** 2 + y ** 2)
+    
+    is_bound = (xb_states_flat >= 2) & (xb_states_flat <= 4)
+    is_strong = (xb_states_flat == 3) | (xb_states_flat == 4)
+    
+    rest_length = jnp.where(
+        is_strong,
+        params.xb_g_rest_strong,
+        params.xb_g_rest_weak,
+    )
+    
+    strain = jnp.abs(r - rest_length)
+    strained = is_bound & (strain > params.xb_lda_strain_threshold)
+
+    return strained.astype(jnp.float32)
+
+
+def compute_local_lda_signal(
+        strained_flat:jnp.ndarray,
+        n_thick: int,
+        n_crowns: int,
+        n_xb_per_crown: int,
+    ) -> jnp.ndarray:
+    
+    strained = strained_flat.reshape(n_thick, n_crowns, n_xb_per_crown)
+    
+    crown_signal = jnp.max(strained, axis=2)
+    
+    left = jnp.pad(crown_signal[:, :-1], ((0, 0), (1, 0)))
+    center = crown_signal
+    right = jnp.pad(crown_signal[:, 1:], ((0, 0), (0, 1)))
+    
+    neighbor_signal = jnp.maximum(jnp.maximum(left, center), right)
+    
+    return jnp.repeat(
+        neighbor_signal[:, :, None],
+        n_xb_per_crown,
+        axis=2
+    ).reshape(-1)
+
+# ============================================================================
 # CROSSBRIDGE TRANSITIONS
 # ============================================================================
 
@@ -421,7 +474,8 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
                    permissiveness: jnp.ndarray,
                    ca_concentration: float,
                    temp_celsius: float,
-                   params: Dict) -> jnp.ndarray:
+                   params: Dict,
+                   lda_signal: jnp.ndarray) -> jnp.ndarray:
     """Construct rate matrices for crossbridge transitions.
 
     Each crossbridge has a 6x6 rate matrix for its states:
@@ -516,7 +570,7 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
     srx_kmax = params.xb_srx_kmax
     srx_b = params.xb_srx_b
     srx_ca50 = params.xb_srx_ca50
-
+    
     # DRX (1) <-> loose (2) using imported rate functions
     r12 = xb_rate_12(permissiveness, r12_coeff, E_weak)
     r21 = xb_rate_21(r12, U_DRX, U_loose)
@@ -538,7 +592,9 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
     r15 = xb_rate_15(r15_rate) * ones
 
     # SRX (6) <-> DRX (1)
-    r61 = xb_rate_61(ca_concentration, srx_k0, srx_kmax, srx_b, srx_ca50) * ones
+    r61_base = xb_rate_61(ca_concentration, srx_k0, srx_kmax, srx_b, srx_ca50)
+    lda_multiplier = 1.0 + params.xb_lda_gain * lda_signal
+    r61 = r61_base * lda_multiplier
     r16 = xb_rate_16(r16_rate) * ones
 
     # Diagonal rates: row sums must be zero for valid rate matrices
@@ -593,7 +649,7 @@ def compute_xb_transition_matrices(
 
     # Get axial distances for bin assignment
     xb_distances = state.thick.xb_distances
-    lattice_spacing = constants.lattice_spacing
+    lattice_spacing = constants.lattice_spacing  
 
     if xb_distances is not None:
         xb_distances_flat = xb_distances.reshape(-1, 2)
@@ -619,6 +675,22 @@ def compute_xb_transition_matrices(
     ca_conc = 10.0 ** (-constants.pCa)
     n_bins = topology.xb_bin_centers.shape[0]   # static integer known to XLA
     d = lattice_spacing
+    
+    xb_states_flat = xb_states.reshape(-1)
+    
+    strained_flat = compute_xb_strain_siganl(
+        xb_distances_flat,
+        xb_states_flat,
+        constants,
+    )
+
+    lda_signal = constants.xb_lda_enabled * compute_local_lda_signal(
+        strained_flat,
+        n_thick,
+        n_crowns,
+        n_xb_per_crown,
+    )
+
 
     # Build (n_bins, 2) distance grid: [bin_center, lattice_spacing] for each bin
     x_centers = topology.xb_bin_centers                      # (n_bins,)
@@ -632,14 +704,23 @@ def compute_xb_transition_matrices(
         constants.xb_c_k_strong, constants.xb_c_rest_strong,
     ])
     springs_grid = jnp.broadcast_to(spring_vec, (n_bins, 8))  # (n_bins, 8)
-
+    # pdb.set_trace()
+    
+    lda0 = jnp.zeros(n_bins)
+    lda1 = jnp.ones(n_bins)
+    
     # Q matrices for AP=0 and AP=1 at each bin position
-    Q_ap0 = xb_rate_matrix(dist_grid, d, springs_grid,
-                            jnp.zeros(n_bins), ca_conc, constants.temp_celsius, constants)
-    Q_ap1 = xb_rate_matrix(dist_grid, d, springs_grid,
-                            jnp.ones(n_bins),  ca_conc, constants.temp_celsius, constants)
+    Q_ap0_lda0 = xb_rate_matrix(dist_grid, d, springs_grid,
+                            jnp.zeros(n_bins), ca_conc, constants.temp_celsius, constants, lda0,)
+    Q_ap0_lda1 = xb_rate_matrix(dist_grid, d, springs_grid,
+                            jnp.zeros(n_bins),  ca_conc, constants.temp_celsius, constants, lda1,)
+    Q_ap1_lda0 = xb_rate_matrix(dist_grid, d, springs_grid,
+                            jnp.ones(n_bins), ca_conc, constants.temp_celsius, constants, lda0,)
+    Q_ap1_lda1 = xb_rate_matrix(dist_grid, d, springs_grid,
+                            jnp.ones(n_bins),  ca_conc, constants.temp_celsius, constants, lda1,)
+    
     # Layout: [0..n_bins-1] = AP=0, [n_bins..2*n_bins-1] = AP=1
-    Q_bins = jnp.concatenate([Q_ap0, Q_ap1], axis=0)         # (2*n_bins, 6, 6)
+    Q_bins = jnp.concatenate([Q_ap0_lda0, Q_ap0_lda1, Q_ap1_lda0, Q_ap1_lda1], axis=0)         # (2*n_bins, 6, 6)
 
     P_bins = matrix_exponential_batch(Q_bins, dt, identity=topology.eye_6)
 
@@ -653,7 +734,9 @@ def compute_xb_transition_matrices(
     bin_idx = jnp.clip(bin_idx, 0, n_bins - 1)
 
     ap  = permissiveness.astype(jnp.int32)                         # 0 or 1
-    key = ap * n_bins + bin_idx                                    # in [0, 2*n_bins)
+    lda = lda_signal.astype(jnp.int32)
+    
+    key = (ap * 2 + lda) * n_bins + bin_idx                                    # in [0, 2*n_bins)
 
     Q_all     = Q_bins[key]      # (n_xb_total, 6, 6)
     P_all     = P_bins[key]      # (n_xb_total, 6, 6)

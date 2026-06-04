@@ -1,0 +1,82 @@
+{
+  "genotype": "WT",
+  "excel": "/home/zhiyang_xue/multifil_jax/20260504 FLNC flwt skinned mechanics.xlsx",
+  "model_root": "/home/zhiyang_xue/multifil_jax/multifil_jax",
+  "best_loss": 446.73743927516506,
+  "best_params": {
+    "xb_lda_enabled": 1.0,
+    "xb_lda_gain": 9.806996740240193,
+    "xb_lda_strain_threshold": 2.516692664782135,
+    "xb_srx_k0": 0.38958690107407334,
+    "xb_srx_kmax": 0.871628936664491,
+    "xb_srx_ca50": 5.10072935299339e-07
+  },
+  "details": {
+    "total_loss": 446.73743927516506,
+    "curve_loss": 137.08587078201373,
+    "pca50_loss": 154.53225462962928,
+    "hill_loss": 1.174118467785577,
+    "sim_hill_fit": {
+      "2.0": {
+        "pCa50": 6.499999999999999,
+        "hill_slope": 3.5714474238884892
+      },
+      "2.3": {
+        "pCa50": 6.499999999999999,
+        "hill_slope": 2.472107152459547
+      }
+    },
+    "sim_norm_force": {
+      "2.0": [
+        0.0,
+        0.9377632141113281,
+        0.9485775232315063,
+        0.9752899408340454,
+        0.9742857217788696,
+        0.9701249599456787,
+        0.9611527919769287,
+        1.0
+      ],
+      "2.3": [
+        0.0,
+        0.8865861296653748,
+        0.8805791139602661,
+        1.0003619194030762,
+        0.9929769039154053,
+        0.9519206285476685,
+        0.9367431998252869,
+        1.0
+      ]
+    },
+    "params": {
+      "xb_lda_enabled": 1.0,
+      "xb_lda_gain": 9.806996740240193,
+      "xb_lda_strain_threshold": 2.516692664782135,
+      "xb_srx_k0": 0.38958690107407334,
+      "xb_srx_kmax": 0.871628936664491,
+      "xb_srx_ca50": 5.10072935299339e-07
+    }
+  },
+  "settings": {
+    "command": "fit",
+    "excel": "/home/zhiyang_xue/multifil_jax/20260504 FLNC flwt skinned mechanics.xlsx",
+    "model_root": "/home/zhiyang_xue/multifil_jax/multifil_jax",
+    "output_dir": "fit_results",
+    "genotype": "WT",
+    "nrows": 2,
+    "ncols": 2,
+    "duration_ms": 1000.0,
+    "dt": 1.0,
+    "replicates": 3,
+    "steady_last_ms": 200.0,
+    "rng_seed": 0,
+    "weight_curve": 1.0,
+    "weight_pca50": 2.0,
+    "weight_hill": 0.5,
+    "params_json": null,
+    "maxiter": 8,
+    "popsize": 4,
+    "random_trials": 40,
+    "polish": false
+  }
+}
