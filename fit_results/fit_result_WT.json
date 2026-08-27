@@ -1,0 +1,91 @@
+{
+  "genotype": "WT",
+  "excel": "/home/zhiyang_xue/multifil_jax/20260610 FLNC Skinned Mechanics.xlsx",
+  "model_root": "/home/zhiyang_xue/multifil_jax/multifil_jax",
+  "best_loss": 32.6599466499968,
+  "best_params": {
+    "tm_coop_magnitude": 452.9165911209917
+  },
+  "details": {
+    "total_loss": 32.6599466499968,
+    "curve_loss": 22.322708777661223,
+    "pca50_loss": 0.6686438164311361,
+    "hill_loss": 17.999900478946607,
+    "sim_hill_fit": {
+      "2.0": {
+        "pCa50": 5.433241183614397,
+        "hill_slope": 1.067832064664365
+      },
+      "2.3": {
+        "pCa50": 5.727569223625339,
+        "hill_slope": 1.6194226249393286
+      }
+    },
+    "per_genotype": {
+      "WT": {
+        "total_loss": 32.6599466499968,
+        "curve_loss": 22.322708777661223,
+        "pca50_loss": 0.6686438164311361,
+        "hill_loss": 17.999900478946607,
+        "sim_hill_fit": {
+          "2.0": {
+            "pCa50": 5.433241183614397,
+            "hill_slope": 1.067832064664365
+          },
+          "2.3": {
+            "pCa50": 5.727569223625339,
+            "hill_slope": 1.6194226249393286
+          }
+        }
+      }
+    },
+    "sim_norm_force": {
+      "2.0": [
+        0.0,
+        0.21127009391784668,
+        0.19696159660816193,
+        0.3313859701156616,
+        0.3748137652873993,
+        0.4167124629020691,
+        0.7776907682418823,
+        1.0
+      ],
+      "2.3": [
+        0.0,
+        0.12684792280197144,
+        0.2750188112258911,
+        0.4245838522911072,
+        0.6221778392791748,
+        0.8018914461135864,
+        0.8713675737380981,
+        1.0
+      ]
+    },
+    "params": {
+      "tm_coop_magnitude": 452.9165911209917
+    }
+  },
+  "settings": {
+    "command": "fit",
+    "excel": "/home/zhiyang_xue/multifil_jax/20260610 FLNC Skinned Mechanics.xlsx",
+    "model_root": "/home/zhiyang_xue/multifil_jax/multifil_jax",
+    "output_dir": "fit_results",
+    "genotype": "WT",
+    "fit_set": "tm_coop",
+    "nrows": 2,
+    "ncols": 2,
+    "duration_ms": 1000.0,
+    "dt": 1.0,
+    "replicates": 3,
+    "steady_last_ms": 200.0,
+    "rng_seed": 0,
+    "weight_curve": 1.0,
+    "weight_pca50": 2.0,
+    "weight_hill": 0.5,
+    "params_json": null,
+    "maxiter": 8,
+    "popsize": 4,
+    "random_trials": 40,
+    "polish": false
+  }
+}

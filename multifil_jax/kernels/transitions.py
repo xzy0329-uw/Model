@@ -416,53 +416,80 @@ def thin_transitions(state: 'State',
 # Length Dependence Activation
 # ============================================================================
 
-def compute_xb_strain_siganl(
-        xb_distances_flat, 
-        xb_states_flat, 
-        params,
-    ) -> jnp.ndarray:
-    
+def compute_xb_strain_signal(
+    xb_distances_flat,
+    xb_states_flat,
+    params,
+) -> jnp.ndarray:
     x = xb_distances_flat[:, 0]
     y = xb_distances_flat[:, 1]
-    r = jnp.sqrt(x ** 2 + y ** 2)
-    
-    is_bound = (xb_states_flat >= 2) & (xb_states_flat <= 4)
+    r = jnp.sqrt(x**2 + y**2)
+
     is_strong = (xb_states_flat == 3) | (xb_states_flat == 4)
-    
+
     rest_length = jnp.where(
         is_strong,
         params.xb_g_rest_strong,
         params.xb_g_rest_weak,
     )
+
+    spring_k = jnp.where(
+        is_strong,
+        params.xb_g_k_strong,
+        params.xb_g_k_weak,
+    )
+
+    # Crossbridge radial spring force, then project it onto the axial direction.
+    radial_force = spring_k * (r - rest_length)
+    axial_force = radial_force * x / jnp.maximum(r, 1e-6)
     
-    strain = jnp.abs(r - rest_length)
-    strained = is_bound & (strain > params.xb_lda_strain_threshold)
+     # Only tensile force from strongly bound XB recruits neighbouring heads.
+    tensile_force = jnp.maximum(axial_force, 0.0)
+    
+    lda_drive = tensile_force
 
-    return strained.astype(jnp.float32)
-
+    signal = is_strong.astype(jnp.float32) * jax.nn.sigmoid((lda_drive - params.xb_lda_force_threshold) / params.xb_lda_force_scale)
+    
+    return signal
 
 def compute_local_lda_signal(
-        strained_flat:jnp.ndarray,
-        n_thick: int,
-        n_crowns: int,
-        n_xb_per_crown: int,
-    ) -> jnp.ndarray:
-    
+    strained_flat: jnp.ndarray,
+    n_thick: int,
+    n_crowns: int,
+    n_xb_per_crown: int,
+) -> jnp.ndarray:
+    """Spread LDA only along the same thick filament.
+
+    A strained head activates heads on the same thick filament at:
+        crown i - 1
+        crown i
+        crown i + 1
+
+    It does not activate heads on neighboring thick filaments.
+    """
     strained = strained_flat.reshape(n_thick, n_crowns, n_xb_per_crown)
-    
-    crown_signal = jnp.max(strained, axis=2)
-    
+
+    # If any head on one crown is strained, that crown is an LDA source.
+    crown_signal = jnp.max(strained, axis=2)  # (n_thick, n_crowns)
+
+    # Spread only along crown axis within the same thick filament.
     left = jnp.pad(crown_signal[:, :-1], ((0, 0), (1, 0)))
     center = crown_signal
     right = jnp.pad(crown_signal[:, 1:], ((0, 0), (0, 1)))
-    
-    neighbor_signal = jnp.maximum(jnp.maximum(left, center), right)
-    
-    return jnp.repeat(
+
+    neighbor_signal = jnp.maximum(
+        jnp.maximum(left, center),
+        right,
+    )
+
+    # Give the same LDA signal to all 3 heads on affected crowns.
+    lda_signal = jnp.repeat(
         neighbor_signal[:, :, None],
         n_xb_per_crown,
-        axis=2
-    ).reshape(-1)
+        axis=2,
+    )
+
+    return lda_signal.reshape(-1)
 
 # ============================================================================
 # CROSSBRIDGE TRANSITIONS
@@ -572,12 +599,17 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
     srx_ca50 = params.xb_srx_ca50
     
     # DRX (1) <-> loose (2) using imported rate functions
-    r12 = xb_rate_12(permissiveness, r12_coeff, E_weak)
-    r21 = xb_rate_21(r12, U_DRX, U_loose)
+    r12_base = xb_rate_12(permissiveness, r12_coeff, E_weak)
+    r21 = xb_rate_21(r12_base, U_DRX, U_loose)
+    compression_nm = jnp.maximum(0.0,params.xb_lattice_reference - lattice_spacing,)
+    lattice_binding_factor = jnp.exp(params.xb_lattice_binding_beta * compression_nm)
+    r12 = r12_base * lattice_binding_factor
 
     # loose (2) <-> tight_1 (3)
-    r23 = xb_rate_23(r23_coeff, E_diff)
-    r32 = xb_rate_32(r23, U_loose, U_tight_1)
+    r23_base = xb_rate_23(r23_coeff, E_diff)
+    r32 = xb_rate_32(r23_base, U_loose, U_tight_1)
+    strong_multiplier = (1.0 + params.xb_lda_strong_gain * lda_signal)
+    r23 = r23_base * strong_multiplier
 
     # tight_1 (3) <-> tight_2 (4)
     r34 = xb_rate_34(r34_coeff, f_3_4, params.xb_delta_34, k_t)
@@ -592,8 +624,8 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
     r15 = xb_rate_15(r15_rate) * ones
 
     # SRX (6) <-> DRX (1)
-    r61_base = xb_rate_61(ca_concentration, srx_k0, srx_kmax, srx_b, srx_ca50)
     lda_multiplier = 1.0 + params.xb_lda_gain * lda_signal
+    r61_base = xb_rate_61(ca_concentration, srx_k0, srx_kmax, srx_b, srx_ca50)
     r61 = r61_base * lda_multiplier
     r16 = xb_rate_16(r16_rate) * ones
 
@@ -678,19 +710,38 @@ def compute_xb_transition_matrices(
     
     xb_states_flat = xb_states.reshape(-1)
     
-    strained_flat = compute_xb_strain_siganl(
+    strain_signal = compute_xb_strain_signal(
         xb_distances_flat,
         xb_states_flat,
         constants,
     )
 
-    lda_signal = constants.xb_lda_enabled * compute_local_lda_signal(
-        strained_flat,
+    local_lda_signal = compute_local_lda_signal(
+        strain_signal,
         n_thick,
         n_crowns,
         n_xb_per_crown,
     )
+    
+    z_preload = jnp.clip(
+        (constants.z_line - constants.xb_lda_reference_z)
+        / constants.xb_lda_z_scale,
+        0.0,
+        1.0,
+    )
+    
+    compression_nm = jnp.maximum(0.0,constants.xb_lattice_reference - constants.lattice_spacing,)
 
+    lda_preload = (
+        constants.xb_lda_preload_gain * z_preload
+        + constants.xb_lda_lattice_gain * compression_nm
+    )
+
+    lda_signal = constants.xb_lda_enabled * jnp.clip(
+        local_lda_signal + lda_preload,
+        0.0,
+        1.0,
+    )
 
     # Build (n_bins, 2) distance grid: [bin_center, lattice_spacing] for each bin
     x_centers = topology.xb_bin_centers                      # (n_bins,)
@@ -720,7 +771,7 @@ def compute_xb_transition_matrices(
                             jnp.ones(n_bins),  ca_conc, constants.temp_celsius, constants, lda1,)
     
     # Layout: [0..n_bins-1] = AP=0, [n_bins..2*n_bins-1] = AP=1
-    Q_bins = jnp.concatenate([Q_ap0_lda0, Q_ap0_lda1, Q_ap1_lda0, Q_ap1_lda1], axis=0)         # (2*n_bins, 6, 6)
+    Q_bins = jnp.concatenate([Q_ap0_lda0, Q_ap0_lda1, Q_ap1_lda0, Q_ap1_lda1], axis=0)         # (4*n_bins, 6, 6)
 
     P_bins = matrix_exponential_batch(Q_bins, dt, identity=topology.eye_6)
 
@@ -734,7 +785,7 @@ def compute_xb_transition_matrices(
     bin_idx = jnp.clip(bin_idx, 0, n_bins - 1)
 
     ap  = permissiveness.astype(jnp.int32)                         # 0 or 1
-    lda = lda_signal.astype(jnp.int32)
+    lda = (lda_signal >= 0.25).astype(jnp.int32)
     
     key = (ap * 2 + lda) * n_bins + bin_idx                                    # in [0, 2*n_bins)
 

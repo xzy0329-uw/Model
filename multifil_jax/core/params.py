@@ -52,7 +52,10 @@ DYNAMIC_FIELDS = (
     # Tiered architecture: drivers stored as constants when not time-varying
     'pCa', 'z_line', 'lattice_spacing',
     # LDA parameter
-    'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold',
+    'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold', 'xb_lda_strain_scale',
+    'xb_lda_reference_z','xb_lda_z_scale','xb_lda_preload_gain','xb_lda_force_threshold','xb_lda_force_scale',
+    'xb_lattice_reference','xb_lattice_binding_beta','xb_lda_lattice_gain',
+    "xb_lda_strong_gain"
 )
 
 
@@ -160,7 +163,11 @@ class DynamicParams:
         # Tiered architecture: drivers stored as constants when not time-varying
         'pCa', 'z_line', 'lattice_spacing',
         # Newly Added for Length Dependence Activation(LDA)
-        'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold'
+        'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold', 'xb_lda_strain_scale',
+        'xb_lda_reference_z','xb_lda_z_scale','xb_lda_preload_gain','xb_lda_force_threshold',
+        'xb_lda_force_scale',
+        'xb_lattice_reference','xb_lattice_binding_beta','xb_lda_lattice_gain',
+        "xb_lda_strong_gain"
     )
 
     def __init__(self, **kwargs):
@@ -176,9 +183,20 @@ class DynamicParams:
         # ==========================================================================
 
         # LDA parameter (Newly Added)
-        self.xb_lda_enabled = jnp.asarray(kwargs.get('xb_lda_enabled', 0.0))           # LDA control switch  
-        self.xb_lda_gain = jnp.asarray(kwargs.get('xb_lda_gain', 5.0))               # basic LDA rate
+        self.xb_lda_enabled = jnp.asarray(kwargs.get('xb_lda_enabled', 1.0))                       # LDA control switch  
+        self.xb_lda_gain = jnp.asarray(kwargs.get('xb_lda_gain', 3.0))                             # basic LDA rate
         self.xb_lda_strain_threshold = jnp.asarray(kwargs.get('xb_lda_strain_threshold', 1.0))     # Over 1um will be considered as strain
+        self.xb_lda_strain_scale = jnp.asarray(kwargs.get('xb_lda_strain_scale', 0.5))             # Sigmoidal response
+        
+        self.xb_lda_reference_z = jnp.asarray(kwargs.get("xb_lda_reference_z", 1000.0))
+        self.xb_lda_z_scale = jnp.asarray(kwargs.get("xb_lda_z_scale", 150.0))
+        self.xb_lda_preload_gain = jnp.asarray(kwargs.get("xb_lda_preload_gain", 0.5))
+        self.xb_lda_force_threshold = jnp.asarray(kwargs.get("xb_lda_force_threshold", 1.0))
+        self.xb_lda_force_scale = jnp.asarray(kwargs.get("xb_lda_force_scale", 0.5))
+        self.xb_lattice_reference = jnp.asarray(kwargs.get("xb_lattice_reference", 14.0))
+        self.xb_lattice_binding_beta = jnp.asarray(kwargs.get("xb_lattice_binding_beta", 0.25))
+        self.xb_lda_lattice_gain = jnp.asarray(kwargs.get("xb_lda_lattice_gain", 0.5))
+        self.xb_lda_strong_gain = jnp.asarray(kwargs.get("xb_lda_strong_gain", 0.5))
                 
         # Thick filament
         self.thick_k = jnp.asarray(kwargs.get('thick_k', 2020.0))  # pN/nm
@@ -222,27 +240,27 @@ class DynamicParams:
         # ==========================================================================
         # TROPOMYOSIN KINETICS (absolute rates)
         # ==========================================================================
-        self.tm_k_12 = jnp.asarray(kwargs.get('tm_k_12', 100000.0))   # Robertson 1981: 5e7–2e8 M⁻¹s⁻¹
-        self.tm_k_23 = jnp.asarray(kwargs.get('tm_k_23', 1.0))        # Fraser & Bhatt 2019; Geeves & Lehrer 1994: 20–1000 s⁻¹
+        self.tm_k_12 = jnp.asarray(kwargs.get('tm_k_12', 10000.0))   # Robertson 1981: 5e7–2e8 M⁻¹s⁻¹
+        self.tm_k_23 = jnp.asarray(kwargs.get('tm_k_23', 0.2))        # Fraser & Bhatt 2019; Geeves & Lehrer 1994: 20–1000 s⁻¹
         self.tm_k_34 = jnp.asarray(kwargs.get('tm_k_34', 0.1))        # center of 50–200 s⁻¹
-        self.tm_k_41 = jnp.asarray(kwargs.get('tm_k_41', 0.2))        # Robertson 1981: 100–500 s⁻¹
+        self.tm_k_41 = jnp.asarray(kwargs.get('tm_k_41', 0.25))        # Robertson 1981: 100–500 s⁻¹
 
         # Equilibrium constants (absolute values)
-        self.tm_K1 = jnp.asarray(kwargs.get('tm_K1', 500000.0))   # skeletal TnC Kd ~2 µM; Potter & Gergely 1975
-        self.tm_K2 = jnp.asarray(kwargs.get('tm_K2', 130.0))      # dimensionless
-        self.tm_K3 = jnp.asarray(kwargs.get('tm_K3', 0.1))        # McKillop & Geeves 1993: K_T=0.09 (no Ca²⁺); close to measured
+        self.tm_K1 = jnp.asarray(kwargs.get('tm_K1', 5000.0))   # skeletal TnC Kd ~2 µM; Potter & Gergely 1975
+        self.tm_K2 = jnp.asarray(kwargs.get('tm_K2', 50.0))      # dimensionless
+        self.tm_K3 = jnp.asarray(kwargs.get('tm_K3', 0.05))        # McKillop & Geeves 1993: K_T=0.09 (no Ca²⁺); close to measured
         self.tm_K4 = jnp.asarray(kwargs.get('tm_K4', 0.0))        # unused
 
         # Cooperativity
-        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 100.0))
+        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 0.5))
         self.tm_span_base = jnp.asarray(kwargs.get('tm_span_base', 62.0))  # nm
         self.tm_span_force50 = jnp.asarray(kwargs.get('tm_span_force50', -8.0))  # pN
-        self.tm_span_steep = jnp.asarray(kwargs.get('tm_span_steep', 1.0))
+        self.tm_span_steep = jnp.asarray(kwargs.get('tm_span_steep', 0.8))
 
         # ==========================================================================
         # CROSSBRIDGE KINETICS (absolute/consolidated values)
         # ==========================================================================
-        self.xb_r12_coeff = jnp.asarray(kwargs.get('xb_r12_coeff', 305.99))
+        self.xb_r12_coeff = jnp.asarray(kwargs.get('xb_r12_coeff', 250.0))
         self.xb_r23_coeff = jnp.asarray(kwargs.get('xb_r23_coeff', 0.6))    # Fitting parameter targeting process B apparent rate (2πb ~ 20–60 s⁻¹ skeletal; Kawai & Zhao 1993 Biophys J 65:638)
         self.xb_r34_coeff = jnp.asarray(kwargs.get('xb_r34_coeff', 0.15))   # Millar & Homsher 1990: 70–100 s⁻¹
         self.xb_r45_coeff = jnp.asarray(kwargs.get('xb_r45_coeff', 0.6))    # Siemankowski & White 1984: ≥500 s⁻¹ (skeletal)
@@ -250,7 +268,7 @@ class DynamicParams:
         self.xb_delta_45 = jnp.asarray(kwargs.get('xb_delta_45', 0.5))      # nm, Bell distance for detachment
         self.xb_r51 = jnp.asarray(kwargs.get('xb_r51', 0.1))
         self.xb_r15 = jnp.asarray(kwargs.get('xb_r15', 0.01))               # Mijailovich 2020 (k−H=10 s⁻¹); detailed balance r51/r15=10
-        self.xb_r16 = jnp.asarray(kwargs.get('xb_r16', 0.007))              # 50% SRX at rest; Stewart 2010 PNAS 107:430
+        self.xb_r16 = jnp.asarray(kwargs.get('xb_r16', 0.010))              # 50% SRX at rest; Stewart 2010 PNAS 107:430
 
         # Free energies (kT units). Total cycle = ΔG_ATP ≈ -22 to -24 kT at 37°C.
         # Partitioning per Howard 2001 Fig 14.6; Pate & Cooke 1989 JMRCM 10:181;
@@ -266,7 +284,7 @@ class DynamicParams:
         self.xb_U_tight_2 = jnp.asarray(kwargs.get('xb_U_tight_2', -21.0))  # AM.ADP post-lever-arm; lever arm ΔG ≈ -6 kT
 
         # SRX -> DRX transition (r61) params
-        self.xb_srx_k0 = jnp.asarray(kwargs.get('xb_srx_k0', 0.007))    # r16/k0=1 → 50% SRX at rest
+        self.xb_srx_k0 = jnp.asarray(kwargs.get('xb_srx_k0', 0.003))    # r16/k0=1 → 50% SRX at rest
         self.xb_srx_kmax = jnp.asarray(kwargs.get('xb_srx_kmax', 0.4))  # Mijailovich 2020 (kPSmax=400 s⁻¹)
         self.xb_srx_b = jnp.asarray(kwargs.get('xb_srx_b', 5.0))        # Mijailovich 2020; Linari 2015 Nature 528:276
         self.xb_srx_ca50 = jnp.asarray(kwargs.get('xb_srx_ca50', 1e-6)) # Ca50 (M)

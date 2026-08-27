@@ -51,7 +51,7 @@ import pandas as pd
 
 
 DEFAULT_EXCEL_PATH = (
-    "/home/zhiyang_xue/multifil_jax/20260504 FLNC flwt skinned mechanics.xlsx"
+    "/home/zhiyang_xue/multifil_jax/20260610 FLNC Skinned Mechanics.xlsx"
 )
 
 DEFAULT_MODEL_ROOT = "/home/zhiyang_xue/multifil_jax/multifil_jax"
@@ -62,7 +62,7 @@ SL_TO_Z_LINE_NM = {2.0: 1000.0, 2.3: 1150.0}
 
 @dataclass(frozen=True)
 class FitTarget:
-    genotype: str
+    genotype: str 
     sl_um: float
     pca: float | None
     mean: float
@@ -225,16 +225,29 @@ def build_topology(model_root: str | Path, nrows: int, ncols: int):
     return jax.device_put(topo)
 
 
-def candidate_vector_to_params(x: np.ndarray) -> Dict[str, float]:
+def candidate_vector_to_params(x: np.ndarray, fit_set: str) -> Dict[str, float]:
     """Map optimizer vector to multifil_jax dynamic_params."""
-    return {
-        "xb_lda_enabled": 1.0,
-        "xb_lda_gain": float(x[0]),
-        "xb_lda_strain_threshold": float(x[1]),
-        "xb_srx_k0": float(x[2]),
-        "xb_srx_kmax": float(x[3]),
-        "xb_srx_ca50": float(10.0 ** x[4]),
-    }
+    if fit_set == "lda_srx":
+        return {
+            "xb_lda_enabled": 1.0,
+            "xb_lda_gain": float(x[0]),
+            "xb_lda_strain_threshold": float(x[1]),
+            "xb_srx_k0": float(x[2]),
+            "xb_srx_kmax": float(x[3]),
+            "xb_srx_ca50": float(10.0 ** x[4]),
+        }
+    if fit_set == "tm_coop":
+        return {
+            "tm_coop_magnitude": float(x[0]),
+        }
+    if fit_set == "tm_coop_span":
+        return {
+            "tm_coop_magnitude": float(x[0]),
+            "tm_span_base": float(x[1]),
+            "tm_span_force50": float(x[2]),
+            "tm_span_steep": float(x[3]),
+        }
+    raise ValueError(f"Unknown fit_set: {fit_set}")
 
 
 def default_candidate_params() -> Dict[str, float]:
@@ -248,15 +261,28 @@ def default_candidate_params() -> Dict[str, float]:
     }
 
 
-def get_bounds() -> List[Tuple[float, float]]:
-    # Last parameter is log10(xb_srx_ca50), not xb_srx_ca50 itself.
-    return [
-        (0.0, 10.0),    # xb_lda_gain
-        (0.1, 5.0),     # xb_lda_strain_threshold
-        (0.001, 0.5),   # xb_srx_k0
-        (0.1, 2.0),     # xb_srx_kmax
-        (-8.0, -5.0),   # log10(xb_srx_ca50)
-    ]
+def get_bounds(fit_set: str) -> List[Tuple[float, float]]:
+    if fit_set == "lda_srx":
+        # Last parameter is log10(xb_srx_ca50), not xb_srx_ca50 itself.
+        return [
+            (0.0, 10.0),    # xb_lda_gain
+            (0.1, 5.0),     # xb_lda_strain_threshold
+            (0.001, 0.5),   # xb_srx_k0
+            (0.1, 2.0),     # xb_srx_kmax
+            (-8.0, -5.0),   # log10(xb_srx_ca50)
+        ]
+    if fit_set == "tm_coop":
+        return [
+            (1.0, 500.0),   # tm_coop_magnitude
+        ]
+    if fit_set == "tm_coop_span":
+        return [
+            (1.0, 500.0),   # tm_coop_magnitude
+            (10.0, 120.0),  # tm_span_base, nm
+            (-30.0, 5.0),   # tm_span_force50, pN
+            (0.1, 5.0),     # tm_span_steep
+        ]
+    raise ValueError(f"Unknown fit_set: {fit_set}")
 
 
 def run_force_pca_protocol(
@@ -305,15 +331,16 @@ def run_force_pca_protocol(
 
         baseline_idx = int(np.argmin(np.abs(PCA_VALUES - 9.0)))
         max_idx = int(np.argmin(np.abs(PCA_VALUES - 4.5)))
-        
+
         active_force = steady - steady[baseline_idx]
         max_active_force = max(abs(float(active_force[max_idx])), 1e-12)
         norm_force = active_force / max_active_force
+
         out[sl_um] = {
             "force": steady,
             "active_force": active_force,
             "norm_force": norm_force,
-            }
+        }
     return out
 
 
@@ -368,7 +395,6 @@ def normalized_force_loss(
     genotype: str,
 ) -> float:
     rows = [t for t in targets if t.genotype == genotype]
-    terms = []
     pca_to_index = {float(p): i for i, p in enumerate(PCA_VALUES)}
     for t in rows:
         if t.sl_um not in sim or t.pca not in pca_to_index:
@@ -437,33 +463,51 @@ def compute_loss(
         rng_seed=rng_seed,
     )
 
-    loss_curve = normalized_force_loss(
-        sim,
-        targets["normalized_force"],
-        genotype=genotype,
-    )
-    loss_pca50, loss_hill, fitted = pca50_hill_losses(
-        sim,
-        targets["pca50"],
-        targets["hill_slope"],
-        genotype=genotype,
-    )
+    genotypes = ["WT", "KO"] if genotype == "both" else [genotype]
+    per_genotype = {}
+    total_terms = []
 
-    total = (
-        weights["curve"] * loss_curve
-        + weights["pca50"] * loss_pca50
-        + weights["hill"] * loss_hill
-    )
+    for genotype_name in genotypes:
+        loss_curve = normalized_force_loss(
+            sim,
+            targets["normalized_force"],
+            genotype=genotype_name,
+        )
+        loss_pca50, loss_hill, fitted = pca50_hill_losses(
+            sim,
+            targets["pca50"],
+            targets["hill_slope"],
+            genotype=genotype_name,
+        )
+
+        genotype_total = (
+            weights["curve"] * loss_curve
+            + weights["pca50"] * loss_pca50
+            + weights["hill"] * loss_hill
+        )
+        total_terms.append(genotype_total)
+        per_genotype[genotype_name] = {
+            "total_loss": genotype_total,
+            "curve_loss": loss_curve,
+            "pca50_loss": loss_pca50,
+            "hill_loss": loss_hill,
+            "sim_hill_fit": {
+                str(sl): {"pCa50": vals[0], "hill_slope": vals[1]}
+                for sl, vals in fitted.items()
+            },
+        }
+
+    total = float(np.mean(total_terms)) if total_terms else 0.0
+
+    primary = per_genotype[genotypes[0]]
 
     details = {
         "total_loss": total,
-        "curve_loss": loss_curve,
-        "pca50_loss": loss_pca50,
-        "hill_loss": loss_hill,
-        "sim_hill_fit": {
-            str(sl): {"pCa50": vals[0], "hill_slope": vals[1]}
-            for sl, vals in fitted.items()
-        },
+        "curve_loss": primary["curve_loss"],
+        "pca50_loss": primary["pca50_loss"],
+        "hill_loss": primary["hill_loss"],
+        "sim_hill_fit": primary["sim_hill_fit"],
+        "per_genotype": per_genotype,
         "sim_norm_force": {
             str(sl): sim_data["norm_force"].tolist()
             for sl, sim_data in sim.items()
@@ -478,12 +522,12 @@ def run_fit(args) -> None:
     topo = build_topology(args.model_root, args.nrows, args.ncols)
     weights = {"curve": args.weight_curve, "pca50": args.weight_pca50, "hill": args.weight_hill}
 
-    bounds = get_bounds()
+    bounds = get_bounds(args.fit_set)
     history = []
     t0 = time.time()
 
     def objective(x):
-        params = candidate_vector_to_params(np.asarray(x, dtype=float))
+        params = candidate_vector_to_params(np.asarray(x, dtype=float), args.fit_set)
         loss, details = compute_loss(
             topo=topo,
             targets=targets,
@@ -537,7 +581,7 @@ def run_fit(args) -> None:
                 best_loss = loss
                 best_x = x
 
-    best_params = candidate_vector_to_params(np.asarray(best_x, dtype=float))
+    best_params = candidate_vector_to_params(np.asarray(best_x, dtype=float), args.fit_set)
     final_loss, final_details = compute_loss(
         topo=topo,
         targets=targets,
@@ -608,9 +652,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--excel", default=DEFAULT_EXCEL_PATH)
     parser.add_argument("--model-root", default=DEFAULT_MODEL_ROOT)
     parser.add_argument("--output-dir", default="fit_results")
-    parser.add_argument("--genotype", choices=["WT", "KO"], default="WT")
-    parser.add_argument("--nrows", type=int, default=2)
-    parser.add_argument("--ncols", type=int, default=2)
+    parser.add_argument("--genotype", choices=["WT", "KO", "both"], default="WT")
+    parser.add_argument(
+        "--fit-set",
+        choices=["lda_srx", "tm_coop", "tm_coop_span"],
+        default="lda_srx",
+        help=(
+            "Parameter set to fit: lda_srx fits LDA/SRX parameters; "
+            "tm_coop fits only tm_coop_magnitude; tm_coop_span also fits "
+            "tm_span_base, tm_span_force50, and tm_span_steep."
+        ),
+    )
+    parser.add_argument("--nrows", type=int, default=4)
+    parser.add_argument("--ncols", type=int, default=4)
     parser.add_argument("--duration-ms", type=float, default=1000.0)
     parser.add_argument("--dt", type=float, default=1.0)
     parser.add_argument("--replicates", type=int, default=3)

@@ -14,7 +14,11 @@ import jax.numpy as jnp
 from typing import Dict, TYPE_CHECKING
 
 from multifil_jax.kernels.forces import axial_force_at_mline
-from multifil_jax.kernels.transitions import compute_xb_transition_matrices
+from multifil_jax.kernels.transitions import (
+    compute_xb_transition_matrices,
+    compute_xb_strain_signal,
+    compute_local_lda_signal,
+)
 from multifil_jax.core.state import Drivers, resolve_value, MetricsDict
 
 if TYPE_CHECKING:
@@ -78,7 +82,8 @@ def compute_all_metrics(
     n_free_2 = jnp.sum(new_xb == 5).astype(jnp.float32)
     n_srx = jnp.sum(new_xb == 6).astype(jnp.float32)
     n_bound = jnp.sum((new_xb >= 2) & (new_xb <= 4)).astype(jnp.float32)
-
+    n_strong = n_tight_1 + n_tight_2
+    
     # ========================================================================
     # TROPOMYOSIN STATE COUNTS
     # ========================================================================
@@ -180,6 +185,56 @@ def compute_all_metrics(
 
     # Work per ATP
     work_per_atp = jnp.where(atp_expected_p > 0.01, work_thick / atp_expected_p, 0.0)
+    
+    #Verify 
+    xb_states_flat = old_state.thick.xb_states.reshape(-1)
+
+    if old_state.thick.xb_distances is not None:
+        xb_distances_flat = old_state.thick.xb_distances.reshape(-1, 2)
+    else:
+        n_xb_total = xb_states_flat.size
+        xb_distances_flat = jnp.zeros((n_xb_total, 2))
+        xb_distances_flat = xb_distances_flat.at[:, 0].set(5.0)
+        xb_distances_flat = xb_distances_flat.at[:, 1].set(constants.lattice_spacing)
+
+    strain_signal = compute_xb_strain_signal(
+        xb_distances_flat,
+        xb_states_flat,
+        resolved_constants,
+    )
+
+    n_thick, n_crowns, n_xb_per_crown = old_state.thick.xb_states.shape
+
+    local_lda_signal = compute_local_lda_signal(
+        strain_signal,
+        n_thick,
+        n_crowns,
+        n_xb_per_crown,
+    )
+
+    z_preload = jnp.clip(
+        (resolved_constants.z_line - resolved_constants.xb_lda_reference_z)
+        / resolved_constants.xb_lda_z_scale,
+        0.0,
+        1.0,
+    )
+
+    compression_nm = jnp.maximum(
+        0.0,
+        resolved_constants.xb_lattice_reference
+        - resolved_constants.lattice_spacing,
+    )
+
+    lda_preload = (
+        resolved_constants.xb_lda_preload_gain * z_preload
+        + resolved_constants.xb_lda_lattice_gain * compression_nm
+    )
+
+    lda_signal = resolved_constants.xb_lda_enabled * jnp.clip(
+        local_lda_signal + lda_preload,
+        0.0,
+        1.0,
+    )
 
     # ========================================================================
     # ASSEMBLE RESULT DICT (fixed keys — same pytree every call)
@@ -207,8 +262,11 @@ def compute_all_metrics(
         'frac_xb_loose': n_loose / n_total_xb,
         'frac_xb_tight_1': n_tight_1 / n_total_xb,
         'frac_xb_tight_2': n_tight_2 / n_total_xb,
+        'frac_xb_strong': n_strong / n_total_xb,
         'frac_xb_free_2': n_free_2 / n_total_xb,
         'frac_xb_srx': n_srx / n_total_xb,
+        'frac_xb_strained': jnp.mean(strain_signal),
+        'frac_xb_lda_signal': jnp.mean(lda_signal),
 
         # TM state counts
         'n_tm_state_0': n_tm_0,
