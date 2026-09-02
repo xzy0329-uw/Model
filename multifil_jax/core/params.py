@@ -240,7 +240,7 @@ class DynamicParams:
         self.tm_K4 = jnp.asarray(kwargs.get('tm_K4', 0.0))        # unused
 
         # Cooperativity
-        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 5.0))
+        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 2.0))
         self.tm_span_base = jnp.asarray(kwargs.get('tm_span_base', 62.0))  # nm
         self.tm_span_force50 = jnp.asarray(kwargs.get('tm_span_force50', -8.0))  # pN
         self.tm_span_steep = jnp.asarray(kwargs.get('tm_span_steep', 0.8))
