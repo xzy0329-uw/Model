@@ -421,10 +421,12 @@ def compute_xb_strain_signal(
     xb_states_flat,
     params,
 ) -> jnp.ndarray:
+    """Continuous local LDA source from XB geometric strain."""
     x = xb_distances_flat[:, 0]
     y = xb_distances_flat[:, 1]
-    r = jnp.sqrt(x**2 + y**2)
+    r = jnp.sqrt(x ** 2 + y ** 2)
 
+    is_bound = (xb_states_flat >= 2) & (xb_states_flat <= 4)
     is_strong = (xb_states_flat == 3) | (xb_states_flat == 4)
 
     rest_length = jnp.where(
@@ -433,24 +435,19 @@ def compute_xb_strain_signal(
         params.xb_g_rest_weak,
     )
 
-    spring_k = jnp.where(
-        is_strong,
-        params.xb_g_k_strong,
-        params.xb_g_k_weak,
+    strain = jnp.abs(r - rest_length)
+    excess_strain = jnp.maximum(
+        0.0,
+        strain - params.xb_lda_strain_threshold,
     )
 
-    # Crossbridge radial spring force, then project it onto the axial direction.
-    radial_force = spring_k * (r - rest_length)
-    axial_force = radial_force * x / jnp.maximum(r, 1e-6)
-    
-     # Only tensile force from strongly bound XB recruits neighbouring heads.
-    tensile_force = jnp.maximum(axial_force, 0.0)
-    
-    lda_drive = tensile_force
+    strain_signal = jnp.clip(
+        excess_strain / params.xb_lda_strain_scale,
+        0.0,
+        1.0,
+    )
 
-    signal = is_strong.astype(jnp.float32) * jax.nn.sigmoid((lda_drive - params.xb_lda_force_threshold) / params.xb_lda_force_scale)
-    
-    return signal
+    return is_bound.astype(jnp.float32) * strain_signal
 
 def compute_local_lda_signal(
     strained_flat: jnp.ndarray,
@@ -606,10 +603,8 @@ def xb_rate_matrix(xb_distances: jnp.ndarray,
     r12 = r12_base * lattice_binding_factor
 
     # loose (2) <-> tight_1 (3)
-    r23_base = xb_rate_23(r23_coeff, E_diff)
-    r32 = xb_rate_32(r23_base, U_loose, U_tight_1)
-    strong_multiplier = (1.0 + params.xb_lda_strong_gain * lda_signal)
-    r23 = r23_base * strong_multiplier
+    r23 = xb_rate_23(r23_coeff, E_diff)
+    r32 = xb_rate_32(r23, U_loose, U_tight_1)
 
     # tight_1 (3) <-> tight_2 (4)
     r34 = xb_rate_34(r34_coeff, f_3_4, params.xb_delta_34, k_t)
@@ -717,31 +712,13 @@ def compute_xb_transition_matrices(
     )
 
     local_lda_signal = compute_local_lda_signal(
-        strain_signal,
-        n_thick,
-        n_crowns,
-        n_xb_per_crown,
-    )
-    
-    z_preload = jnp.clip(
-        (constants.z_line - constants.xb_lda_reference_z)
-        / constants.xb_lda_z_scale,
-        0.0,
-        1.0,
-    )
-    
-    compression_nm = jnp.maximum(0.0,constants.xb_lattice_reference - constants.lattice_spacing,)
-
-    lda_preload = (
-        constants.xb_lda_preload_gain * z_preload
-        + constants.xb_lda_lattice_gain * compression_nm
+    strain_signal,
+    n_thick,
+    n_crowns,
+    n_xb_per_crown,
     )
 
-    lda_signal = constants.xb_lda_enabled * jnp.clip(
-        local_lda_signal + lda_preload,
-        0.0,
-        1.0,
-    )
+    lda_signal = constants.xb_lda_enabled * local_lda_signal
 
     # Build (n_bins, 2) distance grid: [bin_center, lattice_spacing] for each bin
     x_centers = topology.xb_bin_centers                      # (n_bins,)

@@ -53,9 +53,7 @@ DYNAMIC_FIELDS = (
     'pCa', 'z_line', 'lattice_spacing',
     # LDA parameter
     'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold', 'xb_lda_strain_scale',
-    'xb_lda_reference_z','xb_lda_z_scale','xb_lda_preload_gain','xb_lda_force_threshold','xb_lda_force_scale',
-    'xb_lattice_reference','xb_lattice_binding_beta','xb_lda_lattice_gain',
-    "xb_lda_strong_gain"
+    'xb_lattice_reference','xb_lattice_binding_beta',
 )
 
 
@@ -164,10 +162,7 @@ class DynamicParams:
         'pCa', 'z_line', 'lattice_spacing',
         # Newly Added for Length Dependence Activation(LDA)
         'xb_lda_enabled', 'xb_lda_gain', 'xb_lda_strain_threshold', 'xb_lda_strain_scale',
-        'xb_lda_reference_z','xb_lda_z_scale','xb_lda_preload_gain','xb_lda_force_threshold',
-        'xb_lda_force_scale',
-        'xb_lattice_reference','xb_lattice_binding_beta','xb_lda_lattice_gain',
-        "xb_lda_strong_gain"
+        'xb_lattice_reference','xb_lattice_binding_beta',
     )
 
     def __init__(self, **kwargs):
@@ -188,15 +183,8 @@ class DynamicParams:
         self.xb_lda_strain_threshold = jnp.asarray(kwargs.get('xb_lda_strain_threshold', 1.0))     # Over 1um will be considered as strain
         self.xb_lda_strain_scale = jnp.asarray(kwargs.get('xb_lda_strain_scale', 0.5))             # Sigmoidal response
         
-        self.xb_lda_reference_z = jnp.asarray(kwargs.get("xb_lda_reference_z", 1000.0))
-        self.xb_lda_z_scale = jnp.asarray(kwargs.get("xb_lda_z_scale", 150.0))
-        self.xb_lda_preload_gain = jnp.asarray(kwargs.get("xb_lda_preload_gain", 0.5))
-        self.xb_lda_force_threshold = jnp.asarray(kwargs.get("xb_lda_force_threshold", 1.0))
-        self.xb_lda_force_scale = jnp.asarray(kwargs.get("xb_lda_force_scale", 0.5))
         self.xb_lattice_reference = jnp.asarray(kwargs.get("xb_lattice_reference", 14.0))
         self.xb_lattice_binding_beta = jnp.asarray(kwargs.get("xb_lattice_binding_beta", 0.25))
-        self.xb_lda_lattice_gain = jnp.asarray(kwargs.get("xb_lda_lattice_gain", 0.5))
-        self.xb_lda_strong_gain = jnp.asarray(kwargs.get("xb_lda_strong_gain", 0.5))
                 
         # Thick filament
         self.thick_k = jnp.asarray(kwargs.get('thick_k', 2020.0))  # pN/nm
@@ -240,7 +228,7 @@ class DynamicParams:
         # ==========================================================================
         # TROPOMYOSIN KINETICS (absolute rates)
         # ==========================================================================
-        self.tm_k_12 = jnp.asarray(kwargs.get('tm_k_12', 10000.0))   # Robertson 1981: 5e7–2e8 M⁻¹s⁻¹
+        self.tm_k_12 = jnp.asarray(kwargs.get('tm_k_12', 15000.0))   # Robertson 1981: 5e7–2e8 M⁻¹s⁻¹
         self.tm_k_23 = jnp.asarray(kwargs.get('tm_k_23', 0.2))        # Fraser & Bhatt 2019; Geeves & Lehrer 1994: 20–1000 s⁻¹
         self.tm_k_34 = jnp.asarray(kwargs.get('tm_k_34', 0.1))        # center of 50–200 s⁻¹
         self.tm_k_41 = jnp.asarray(kwargs.get('tm_k_41', 0.25))        # Robertson 1981: 100–500 s⁻¹
@@ -252,7 +240,7 @@ class DynamicParams:
         self.tm_K4 = jnp.asarray(kwargs.get('tm_K4', 0.0))        # unused
 
         # Cooperativity
-        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 0.5))
+        self.tm_coop_magnitude = jnp.asarray(kwargs.get('tm_coop_magnitude', 5.0))
         self.tm_span_base = jnp.asarray(kwargs.get('tm_span_base', 62.0))  # nm
         self.tm_span_force50 = jnp.asarray(kwargs.get('tm_span_force50', -8.0))  # pN
         self.tm_span_steep = jnp.asarray(kwargs.get('tm_span_steep', 0.8))

@@ -16,6 +16,7 @@ import jax
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.optimize import curve_fit
 
 
 def find_repo_root(explicit: Path | None) -> Path:
@@ -48,24 +49,45 @@ def print_parameter_block(title: str, parameters: dict) -> None:
         print(f"{name:<{width}} = {value}")
 
 
+def hill_curve(pca, pca50, hill_coefficient):
+    """Normalized descending Hill curve in pCa coordinates."""
+    return 1.0 / (1.0 + 10.0 ** (hill_coefficient * (pca - pca50)))
+
+
+def fit_model_sigmoid(pca: np.ndarray, normalized_force: np.ndarray):
+    """Fit a smooth Hill sigmoid to calculated model points (excluding pCa 9 baseline)."""
+    mask = pca < 8.0
+    fit_pca = np.asarray(pca[mask], dtype=float)
+    fit_force = np.clip(np.asarray(normalized_force[mask], dtype=float), 0.0, 1.2)
+    popt, _ = curve_fit(
+        hill_curve,
+        fit_pca,
+        fit_force,
+        p0=(5.7, 2.0),
+        bounds=([4.0, 0.1], [7.0, 10.0]),
+        maxfev=20000,
+    )
+    smooth_pca = np.linspace(float(fit_pca.min()), float(fit_pca.max()), 500)
+    return smooth_pca, hill_curve(smooth_pca, *popt), float(popt[0]), float(popt[1])
+
+
 def simulate_wt(
     repo_root: Path, data: pd.DataFrame, output_dir: Path, args
 ) -> dict[float, dict[str, np.ndarray]]:
     sys.path.insert(0, str(repo_root))
-    from multifil_jax import get_cardiac_params, run
+    from multifil_jax import run
+    from multifil_jax.core.params import DynamicParams, StaticParams
     from multifil_jax.core.sarc_geometry import SarcTopology
 
-    fit_path = repo_root / "fit_results" / "fit_result_WT.json"
-    fit = json.loads(fit_path.read_text(encoding="utf-8"))
-    fitted_parameters = {key: float(value) for key, value in fit["best_params"].items()}
-    settings = fit.get("settings", {})
-
-    static, cardiac_dynamic = get_cardiac_params()
-    cardiac_parameters = cardiac_dynamic.to_dict()
-    dynamic = cardiac_dynamic.copy(**fitted_parameters)
-    effective_parameters = dynamic.to_dict()
-    nrows = args.nrows or int(settings.get("nrows", 2))
-    ncols = args.ncols or int(settings.get("ncols", 2))
+    # Use the defaults written directly in multifil_jax/core/params.py.
+    # Do not call get_cardiac_params(), because that function applies a separate
+    # cardiac_overrides dictionary after DynamicParams is constructed.
+    static = StaticParams()
+    dynamic = DynamicParams()
+    params_py_parameters = dynamic.to_dict()
+    effective_parameters = params_py_parameters.copy()
+    nrows = args.nrows or 2
+    ncols = args.ncols or 2
     topology = SarcTopology.create(
         nrows=nrows,
         ncols=ncols,
@@ -76,11 +98,11 @@ def simulate_wt(
 
     experimental_pca = np.sort(data["pca"].unique())[::-1]
     pca_values = np.unique(np.r_[9.0, experimental_pca])[::-1]
-    duration_ms = args.duration_ms or float(settings.get("duration_ms", 1000.0))
-    dt_ms = args.dt_ms or float(settings.get("dt", 1.0))
-    replicates = args.replicates or int(settings.get("replicates", 3))
-    steady_last_ms = args.steady_last_ms or float(settings.get("steady_last_ms", 200.0))
-    rng_seed = int(settings.get("rng_seed", 0))
+    duration_ms = args.duration_ms or 1000.0
+    dt_ms = args.dt_ms or 1.0
+    replicates = args.replicates or 10
+    steady_last_ms = args.steady_last_ms or 200.0
+    rng_seed = 0
 
     protocol = {
         "sarcomere_lengths_um": [2.0, 2.3],
@@ -96,12 +118,11 @@ def simulate_wt(
     }
     report = {
         "sources": {
-            "cardiac_preset": "multifil_jax.get_cardiac_params()",
-            "WT_fit": str(fit_path),
+            "model_parameters": "multifil_jax.core.params.DynamicParams() defaults",
+            "static_parameters": "multifil_jax.core.params.StaticParams() defaults",
             "experimental_data": str(repo_root / "data" / "pca_force.csv"),
         },
-        "get_cardiac_params_dynamic": cardiac_parameters,
-        "WT_fit_overrides": fitted_parameters,
+        "params_py_dynamic_defaults": params_py_parameters,
         "effective_dynamic_parameters": effective_parameters,
         "static_parameters": asdict(static),
         "simulation_protocol": protocol,
@@ -113,8 +134,7 @@ def simulate_wt(
         [{"parameter": name, "value": value} for name, value in effective_parameters.items()]
     ).to_csv(parameter_csv, index=False)
 
-    print_parameter_block("get_cardiac_params() dynamic parameters", cardiac_parameters)
-    print_parameter_block("WT fit overrides", fitted_parameters)
+    print_parameter_block("DynamicParams() defaults read directly from params.py", params_py_parameters)
     print_parameter_block("Effective dynamic parameters used", effective_parameters)
     print_parameter_block("Static parameters used", asdict(static))
     print_parameter_block("Simulation protocol", protocol)
@@ -132,7 +152,7 @@ def simulate_wt(
             dt=dt_ms,
             replicates=replicates,
             rng_seed=rng_seed,
-            dynamic_params=fitted_parameters,
+            dynamic_params=effective_parameters,
         )
         n_steady = max(1, int(round(steady_last_ms / dt_ms)))
         force = np.asarray(result.axial_force)[..., -n_steady:].mean(axis=-1)
@@ -151,11 +171,20 @@ def simulate_wt(
             if normalized_replicates.shape[1] > 1
             else np.zeros(len(pca_values))
         )
+        normalized_mean = normalized_replicates.mean(axis=1)
+        smooth_pca, smooth_force, pca50, hill = fit_model_sigmoid(
+            pca_values, normalized_mean
+        )
         simulations[sl_um] = {
             "pca": pca_values,
-            "normalized_force": normalized_replicates.mean(axis=1),
+            "normalized_force": normalized_mean,
             "normalized_sem": sem,
+            "smooth_pca": smooth_pca,
+            "smooth_force": smooth_force,
+            "pCa50": pca50,
+            "hill_coefficient": hill,
         }
+        print(f"  Hill curve: pCa50={pca50:.4f}, nH={hill:.4f}")
     return simulations
 
 
@@ -169,8 +198,14 @@ def draw_condition(ax, sl_um, experiment, simulation, color):
         label=f"Experiment, SL={sl_um:.1f} µm",
     )
     ax.plot(
-        sim["pca"], 100.0 * sim["normalized_force"], "-o", lw=2, ms=4,
-        color=color, label=f"Model, SL={sl_um:.1f} µm",
+        sim["pca"], 100.0 * sim["normalized_force"], "o", ms=4,
+        color=color, alpha=0.75, label=f"Calculated model points, SL={sl_um:.1f} µm",
+    )
+    ax.plot(
+        sim["smooth_pca"], 100.0 * sim["smooth_force"], "-", lw=2.3,
+        color=color,
+        label=(f"Model Hill curve, SL={sl_um:.1f} µm "
+               f"(pCa₅₀={sim['pCa50']:.3f}, nH={sim['hill_coefficient']:.2f})"),
     )
 
 
@@ -209,6 +244,17 @@ def main() -> None:
     wt_data = normalized_experiment(data[data["sl_um"].isin([2.0, 2.3])])
     simulation = simulate_wt(repo_root, wt_data, output_dir, args)
 
+    curve_rows = []
+    for sl_um, sim in simulation.items():
+        curve_rows.extend(
+            {"SL_um": sl_um, "pCa": pca, "normalized_force": force,
+             "force_percent_max": 100.0 * force,
+             "pCa50": sim["pCa50"], "hill_coefficient": sim["hill_coefficient"]}
+            for pca, force in zip(sim["smooth_pca"], sim["smooth_force"])
+        )
+    curve_csv = output_dir / "WT_model_sigmoidal_pCa_force_curves.csv"
+    pd.DataFrame(curve_rows).to_csv(curve_csv, index=False)
+
     fig1, ax1 = plt.subplots(figsize=(7.2, 5.4))
     draw_condition(ax1, 2.0, wt_data, simulation, "#2463A6")
     finish_axis(ax1, "WT pCa–Force: Model vs Experiment at SL=2.0 µm")
@@ -230,6 +276,7 @@ def main() -> None:
         plt.close("all")
     print(f"Saved {figure1}")
     print(f"Saved {figure2}")
+    print(f"Saved {curve_csv}")
 
 
 if __name__ == "__main__":

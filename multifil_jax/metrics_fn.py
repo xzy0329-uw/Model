@@ -63,6 +63,7 @@ def compute_all_metrics(
     new_xb = new_state.thick.xb_states
     old_tm = old_state.thin.tm_states
     new_tm = new_state.thin.tm_states
+    n_thick, n_crowns, n_xb_per_crown = old_xb.shape
 
     n_total_xb = jnp.float32(jnp.size(new_xb))
     n_total_tm = jnp.float32(jnp.size(new_tm))
@@ -203,8 +204,6 @@ def compute_all_metrics(
         resolved_constants,
     )
 
-    n_thick, n_crowns, n_xb_per_crown = old_state.thick.xb_states.shape
-
     local_lda_signal = compute_local_lda_signal(
         strain_signal,
         n_thick,
@@ -212,28 +211,9 @@ def compute_all_metrics(
         n_xb_per_crown,
     )
 
-    z_preload = jnp.clip(
-        (resolved_constants.z_line - resolved_constants.xb_lda_reference_z)
-        / resolved_constants.xb_lda_z_scale,
-        0.0,
-        1.0,
-    )
-
-    compression_nm = jnp.maximum(
-        0.0,
-        resolved_constants.xb_lattice_reference
-        - resolved_constants.lattice_spacing,
-    )
-
-    lda_preload = (
-        resolved_constants.xb_lda_preload_gain * z_preload
-        + resolved_constants.xb_lda_lattice_gain * compression_nm
-    )
-
-    lda_signal = resolved_constants.xb_lda_enabled * jnp.clip(
-        local_lda_signal + lda_preload,
-        0.0,
-        1.0,
+    lda_signal = (
+        resolved_constants.xb_lda_enabled
+        * local_lda_signal
     )
 
     # ========================================================================
